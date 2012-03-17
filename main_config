@@ -1,0 +1,60 @@
+#
+# Main Configuration File for TelnetBBS
+# (c) Jimmy Larsson 1998
+#
+# All options are on the form "option = value"
+#
+
+#
+# Server configuration
+#
+port=9000
+nodes=4
+login_retries=3
+
+#
+# Prompts
+#
+prompt_login=Login: 
+prompt_passwd=Password: 
+
+#
+# Error messages
+#
+error_loginretry=Login failed, retry
+
+
+#
+# Data files
+#
+data_dir=data/
+
+data_user=userdb
+data_area=areadb
+
+#
+# Text files
+#
+text_dir=text/
+
+text_login=login.txt
+text_loginfail=loginfail.txt
+
+#
+# Area files, one copy of every file for each area
+#
+area_dir=areas/
+
+area_commands=.commands
+area_menutext=.menu
+area_filedb=.files
+
+
+
+
+
+
+
+
+
+

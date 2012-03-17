@@ -1,0 +1,8 @@
+#
+# User database for TelnetBBS
+# 
+# Format:
+# loginname:passwd:realname:userid:areas:homearea
+
+jimmy:sk8zMmYuUJipw:Jimmy Larsson:1:1:1
+

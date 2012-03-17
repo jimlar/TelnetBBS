@@ -1,0 +1,256 @@
+#!/usr/bin/perl -w
+#
+# TelnetBBS server
+# (c) Jimmy Larsson 1998
+#
+
+use IO::Socket;
+use Net::hostent;              # for OO version of gethostbyaddr
+use strict;
+
+my ($version_string, $server, $client, $hostinfo, $child_pid, $waitedpid, $current_user, $current_area);
+my (%options, $main_config_file);
+my ($usersById) = {};
+my ($usersByLogin) = {};
+my ($areasById) = {};
+my ($areasByName) = {};
+
+
+# Read main configuration file
+$main_config_file = 'main_config';
+read_options();
+read_users();
+
+$version_string = 'TelnetBBS 0.0.1';  # version
+
+
+$server = IO::Socket::INET->new( Proto     => 'tcp',
+				 LocalPort => $options{'port'},
+				 Listen    => $options{'nodes'},
+				 Reuse     => 1);
+
+#Zombie killer... =)
+$SIG{CHLD} = \&REAPER;
+
+#Prevent double flushing
+IO::Handle->autoflush(1);
+
+die "can't setup server socket" unless $server;
+
+print "[$version_string accepting clients at port $options{'port'}]\n";
+
+
+
+#------------------------ THE SERVER PART --------------------------------
+
+
+
+while ($client = $server->accept()) 
+{
+    $hostinfo = gethostbyaddr($client->peeraddr);
+
+    if (!defined ($child_pid = fork()))
+    {
+	die "can't fork client: $!";
+    } elsif ($child_pid != 0)
+    {
+	# We're the parent
+	# Print some fancy log messages
+
+	$client->autoflush(1);
+
+	printf "[Connect from %s]\n", $hostinfo->name || $client->peerhost;
+
+    } else
+    {
+	# We're the new child, start servicing client
+
+	serve_client ();
+	       	
+	printf "[%s, disconnected]\n", $hostinfo->name || $client->peerhost;
+     
+	close $client;
+	exit 0;
+	
+    } 
+}
+ 
+
+
+
+#-------------------------- MAIN SERVICES -----------------------------------------
+
+#
+# Serve client, main loop for forked client
+#
+sub serve_client
+{
+    display_text ('login');
+
+    if (login ())
+    {
+	execute_area ($current_user->{'homearea'});
+	
+    } else
+    {
+	display_text ('loginfail');
+	return;
+    }
+
+}
+
+#
+# Login
+# 
+sub login
+{
+    my ($login, $passwd, $user);
+    my ($retries) = 0;
+
+    while ($retries < $options{'login_retries'})
+    {
+	print $client $options{'prompt_login'};
+	$login = <$client>;
+	chomp ($login);
+	chop ($login);  #Stripping CR
+	print $client $options{'prompt_passwd'};
+	$passwd = <$client>;
+	chomp ($passwd);
+	chop ($passwd); #Stripping CR, maybe there is a better way?
+
+	$user = $usersByLogin->{$login};
+
+	if (defined ($user) && ($user->{'passwd'} eq crypt ($passwd, substr ($user->{'passwd'}, 0, 2))))
+	{
+	    $current_user = $user;
+	    return 1;
+	}
+	$retries++;
+	if ($retries < $options{'login_retries'})
+	{
+	    print $client $options{'error_loginretry'} . "\n";
+	}
+    }
+
+    return 0;
+}
+
+
+#
+# Startup area
+#
+sub execute_area
+{
+    my ($areaid) = @_;
+    $current_area = $areaById->{$areaid};
+    parse_commands ($options{'area_dir'} . $current_area->{'homedir'} . $optins{'area_commands'});
+    
+    
+}    
+
+
+
+#-------------------------- UTILITY FUNCTIONS -------------------------------------
+
+#
+# Don't wan't no zombies lying around
+#          
+sub REAPER 
+{
+    $waitedpid = wait;
+    $SIG{CHLD} = \&REAPER;  # loathe sysV
+    print "[reaped zombie $waitedpid]\n";
+}
+
+
+#
+# Parse and print textfile
+#
+sub display_text
+{
+    my ($filename) = @_;
+    my ($line);
+    $filename = $options{'text_' . $filename};
+
+    $filename = $options{text_dir} . $filename;
+
+    unless (open (TEXTFILE, $filename))
+    {
+	warn "can't open $filename: $!"; 
+	return;
+    }
+
+    while ($line = <TEXTFILE>)
+    {
+	print $client $line;
+    }
+} 
+
+#
+# Read main configuration file
+#
+sub read_options
+{
+    my ($param, $value); 	
+
+    open (CONFIG, $main_config_file) or die ("can't open main config file: $!");
+    while (<CONFIG>)
+    {
+	chomp;
+	unless (/^#/ || /^\s*$/) # strip comments and empty lines
+	{
+	    ($param, $value) = split (/=/);
+	    $options{$param} = $value;
+	}
+    }	    
+    close (CONFIG);
+}
+
+#
+# read user and area data
+#
+sub read_users
+{
+    my ($usersdb) = $options{'data_dir'} . $options{'data_user'};
+    open (USERS, $usersdb) or die "can't open user data file '$usersdb': $!";
+    while (<USERS>)
+    {
+	chomp;
+	unless (/^#/ || /^\s*$/)
+	{
+	    my (@userinfolist) = split (/:/);
+	    my ($userinfo) = {};
+	    $userinfo->{'login'} = $userinfolist[0];
+	    $userinfo->{'passwd'} = $userinfolist[1];
+	    $userinfo->{'name'} = $userinfolist[2];
+	    $userinfo->{'id'} = $userinfolist[3];
+	    $userinfo->{'areas'} = $userinfolist[4];
+	    $userinfo->{'homearea'} = $userinfolist[5];
+	    $usersById->{$userinfo->{'id'}} = $userinfo;
+	    $usersByLogin->{$userinfo->{'login'}} = $userinfo;
+	}
+    }
+    close (USERS);
+
+    my ($areadb) = $options{'data_dir'} . $options{'data_area'};
+    open (AREA, $areadb) or die "can't open area data file '$areadb': $!";
+    while (<AREA>)
+    {
+	chomp;
+	unless (/^#/ || /^\s*$/)
+	{
+	    my (@areainfolist) = split (/:/);
+	    my ($areainfo) = {};
+	    $areainfo->{'id'} = $areainfolist[0];
+	    $areainfo->{'name'} = $areainfolist[1];
+	    $areainfo->{'members'} = $areainfolist[2];
+	    $areainfo->{'homedir'} = $areainfolist[3];
+	    $areasById->{$areainfo->{'id'}} = $areainfo;
+	    $areasByName->{$areainfo->{'name'}} = $areainfo;
+	}
+    }
+    close (AREA);
+}
+
+
+

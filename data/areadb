@@ -1,0 +1,9 @@
+#
+# Areas database for TelnetBBS
+#
+# Format:
+# areaid:areaname:membersid:homedir
+#
+# homedir is relative to area_dir in main_config
+
+1:New Users:1:1
